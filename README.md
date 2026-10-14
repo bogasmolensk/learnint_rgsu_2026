@@ -5,11 +5,12 @@
 ## Технологии
 
 - Java 17
-- Spring Boot 4.1.1
+- Spring Boot 3.3.5
 - Maven
 - PostgreSQL
 - Spring Data JPA
 - Bean Validation
+- Flyway (миграции схемы БД)
 
 ## Требования
 
@@ -57,3 +58,32 @@ curl http://localhost:8080/ping
 Или откройте в браузере: http://localhost:8080/ping
 
 Ожидаемый ответ: OK
+
+## Схема БД и API-контракт
+
+### Структура базы данных
+Создаётся автоматически миграцией Flyway `V1__init_schema.sql` при первом запуске
+на пустой БД; повторный запуск безопасен (Flyway ведёт журнал в `flyway_schema_history`).
+Таблицы: `users`, `equipment_requests`, `request_status_history`.
+Ограничения в БД: уникальный логин (`UNIQUE`), внешние ключи на автора/заявку/исполнителя
+(`FOREIGN KEY`), `CHECK` на положительное количество и на допустимые статусы/роли,
+обязательные даты (`NOT NULL DEFAULT now()`). История статусов — event-log:
+каждый переход отдельной строкой (`previous_status` / `new_status` / `changed_by` / `comment` / `время`).
+Hibernate работает в режиме `validate` — только сверяет схему, не меняет её.
+
+## Схема связей (ERD)
+
+![ERD](docs/erd.png)
+
+
+## API
+Контракт всех 9 операций с разделением клиентских/серверных полей и примерами JSON —
+в файле [`API_CONTRACT.md`](API_CONTRACT.md). Формат дат в API — ISO 8601 UTC (`...Z`).
+
+## Как запустить миграцию
+```cmd
+set DB_USERNAME=<ваше_имя_пользователя>
+set DB_PASSWORD=<ваш_пароль>
+mvn spring-boot:run
+```
+После старта в pgAdmin → Schemas → public → Tables появятся три таблицы + `flyway_schema_history`.
