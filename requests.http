@@ -1,0 +1,45 @@
+### 1. Создание заявки (ожидается 201)
+POST http://localhost:8080/api/v1/requests
+Content-Type: application/json
+
+{
+  "equipmentName": "Монитор 27",
+  "quantity": 2,
+  "justification": "Для нового сотрудника"
+}
+
+### 2. Получение заявки (ожидается 200)
+GET http://localhost:8080/api/v1/requests/1
+
+### 3. Редактирование (ожидается 200, version=1)
+PATCH http://localhost:8080/api/v1/requests/1
+Content-Type: application/json
+
+{
+  "quantity": 3,
+  "version": 0
+}
+
+### 4. Редактирование без version (ожидается 400)
+PATCH http://localhost:8080/api/v1/requests/1
+Content-Type: application/json
+
+{
+  "quantity": 5
+}
+
+### 5. Несуществующая заявка (ожидается 404)
+GET http://localhost:8080/api/v1/requests/99999
+
+### 6. Некорректный id (ожидается 400)
+GET http://localhost:8080/api/v1/requests/abc
+
+### 7. Валидация: quantity=0 (ожидается 400)
+POST http://localhost:8080/api/v1/requests
+Content-Type: application/json
+
+{
+  "equipmentName": "Клавиатура",
+  "quantity": 0,
+  "justification": "тест"
+}

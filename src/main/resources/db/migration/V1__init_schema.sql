@@ -20,6 +20,7 @@ CREATE TABLE equipment_requests (
                                     created_at        TIMESTAMPTZ   NOT NULL DEFAULT now(),
                                     updated_at        TIMESTAMPTZ   NOT NULL DEFAULT now(),
                                     version           INTEGER       NOT NULL DEFAULT 0,
+
                                     CONSTRAINT fk_requests_author
                                         FOREIGN KEY (author_id) REFERENCES users (id) ON DELETE RESTRICT,
                                     CONSTRAINT chk_requests_quantity   CHECK (quantity > 0),
