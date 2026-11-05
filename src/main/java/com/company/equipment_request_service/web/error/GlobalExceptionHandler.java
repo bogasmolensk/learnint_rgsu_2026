@@ -84,6 +84,16 @@ public class GlobalExceptionHandler {
                 .body(new ErrorResponse("FORBIDDEN", ex.getMessage()));
     }
 
+    @ExceptionHandler(CurrentUserNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleCurrentUserNotFound(CurrentUserNotFoundException ex) {
+        log.error("Текущий пользователь не найден", ex);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(new ErrorResponse(
+                        "INTERNAL_ERROR",
+                        "Внутренняя ошибка сервера. Повторите позже или обратитесь в поддержку."
+                ));
+    }
+
     // 500: всё непредвиденное
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleUnexpected(Exception ex) {

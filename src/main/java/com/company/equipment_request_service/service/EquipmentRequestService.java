@@ -2,19 +2,16 @@ package com.company.equipment_request_service.service;
 
 import com.company.equipment_request_service.dto.*;
 import com.company.equipment_request_service.entity.*;
+import com.company.equipment_request_service.lifecycle.RequestLifecyclePolicy;
 import com.company.equipment_request_service.repository.EquipmentRequestRepository;
+import com.company.equipment_request_service.repository.RequestStatusHistoryRepository;
 import com.company.equipment_request_service.repository.UserRepository;
 import com.company.equipment_request_service.security.CurrentUser;
 import com.company.equipment_request_service.security.CurrentUserProvider;
-import com.company.equipment_request_service.web.error.RequestNotFoundException;
+import com.company.equipment_request_service.web.error.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.company.equipment_request_service.specification.EquipmentRequestSpecifications;
-import com.company.equipment_request_service.web.error.BadRequestException;
-import com.company.equipment_request_service.web.error.FieldErrorDto;
-import com.company.equipment_request_service.web.error.ForbiddenException;
-import com.company.equipment_request_service.web.error.InvalidStatusTransitionException;
-import com.company.equipment_request_service.web.error.VersionConflictException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -34,16 +31,19 @@ public class EquipmentRequestService {
 
     private final EquipmentRequestRepository requestRepo;
     private final UserRepository userRepo;
+    private final RequestStatusHistoryRepository historyRepo;
     private final CurrentUserProvider currentUserProvider;
 
 
     public EquipmentRequestService(
             EquipmentRequestRepository requestRepo,
             UserRepository userRepo,
+            RequestStatusHistoryRepository historyRepo,
             CurrentUserProvider currentUserProvider
     ) {
         this.requestRepo = requestRepo;
         this.userRepo = userRepo;
+        this.historyRepo = historyRepo;
         this.currentUserProvider = currentUserProvider;
     }
 
@@ -55,8 +55,7 @@ public class EquipmentRequestService {
 
         // 2. Загружаем пользователя из БД (проверка, что он существует)
         User author = userRepo.findById(cu.id())
-                .orElseThrow(() -> new IllegalStateException(
-                        "Текущий пользователь id=" + cu.id() + " не найден в БД"));
+                .orElseThrow(() -> new CurrentUserNotFoundException(cu.id()));
 
         // 3. Создаём сущность
         EquipmentRequest r = new EquipmentRequest();
@@ -72,6 +71,7 @@ public class EquipmentRequestService {
 
         // 4. Сохраняем
         EquipmentRequest saved = requestRepo.save(r);
+        recordStatusHistory(saved, author, null, RequestStatus.DRAFT, null);
 
         // 5. Маппим в DTO
         return RequestDetailDto.from(saved);
@@ -89,13 +89,10 @@ public class EquipmentRequestService {
     @Transactional
 
     public RequestDetailDto update(Long id, UpdateRequestDto dto) {
-        EquipmentRequest r = requestRepo.findById(id)
-                .orElseThrow(() -> new RequestNotFoundException(id));
+        EquipmentRequest r = loadAndCheckVersion(id, dto.version());
 
-        if (r.getStatus() != RequestStatus.DRAFT) {
-            throw new InvalidStatusTransitionException(
-                    "Редактирование запрещено: заявка не в статусе DRAFT");   // 409 по advice
-        }
+        RequestLifecyclePolicy.assertAllowed(RequestLifecyclePolicy.Action.EDIT, r.getStatus());
+
         CurrentUser cu = currentUserProvider.currentUser();
         if (!r.getAuthor().getId().equals(cu.id())) {
             throw new ForbiddenException("Изменять заявку может только её автор");  // 403
@@ -191,6 +188,26 @@ public class EquipmentRequestService {
         return PageResponseDto.of(mapped);
     }
 
+    @Transactional
+    public RequestDetailDto submit(Long id, ActionVersionDto dto) {
+        return changeStatus(id, dto.version(), RequestLifecyclePolicy.Action.SUBMIT, null);
+    }
+
+    @Transactional
+    public RequestDetailDto approve(Long id, ActionVersionDto dto) {
+        return changeStatus(id, dto.version(), RequestLifecyclePolicy.Action.APPROVE, null);
+    }
+
+    @Transactional
+    public RequestDetailDto reject(Long id, RejectRequestDto dto) {
+        return changeStatus(id, dto.version(), RequestLifecyclePolicy.Action.REJECT, dto.comment());
+    }
+
+    @Transactional
+    public RequestDetailDto cancel(Long id, ActionVersionDto dto) {
+        return changeStatus(id, dto.version(), RequestLifecyclePolicy.Action.CANCEL, null);
+    }
+
     private Instant parseInstantOrThrow(String value, String field) {
         if (value == null || value.isBlank()) return null;       // фильтр не применяется
         try {
@@ -205,21 +222,122 @@ public class EquipmentRequestService {
     private Sort buildSort(String sortParam) {
         Set<String> allowed = Set.of("createdAt", "id");
         Sort base;
+
         if (sortParam == null || sortParam.isBlank()) {
             base = Sort.by(Sort.Direction.DESC, "createdAt");
         } else {
-            String[] parts = sortParam.split(",");
+            // -1 = не выбрасывать хвостовые пустые строки, иначе "?" даёт пустой массив и падает parts[0]
+            String[] parts = sortParam.trim().split(",", -1);
+
+            if (parts.length > 2) {
+                throw new BadRequestException("INVALID_SORT",
+                        "Некорректный параметр сортировки: '" + sortParam + "'",
+                        List.of(new FieldErrorDto("sort", "ожидалось: поле,asc|desc")));
+            }
+
             String field = parts[0].trim();
             if (!allowed.contains(field)) {
                 throw new BadRequestException("INVALID_SORT",
                         "Неизвестное поле сортировки: '" + field + "'",
                         List.of(new FieldErrorDto("sort", "допустимо: createdAt, id")));
             }
-            Sort.Direction dir = (parts.length > 1 && parts[1].trim().equalsIgnoreCase("asc"))
-                    ? Sort.Direction.ASC : Sort.Direction.DESC;
+
+            Sort.Direction dir = Sort.Direction.DESC;
+            if (parts.length == 2) {
+                String d = parts[1].trim().toLowerCase();
+                if (d.equals("asc")) {
+                    dir = Sort.Direction.ASC;
+                } else if (d.equals("desc")) {
+                    dir = Sort.Direction.DESC;
+                } else {
+                    throw new BadRequestException("INVALID_SORT",
+                            "Неизвестное направление сортировки: '" + parts[1] + "'",
+                            List.of(new FieldErrorDto("sort", "допустимо: asc, desc")));
+                }
+            }
             base = Sort.by(dir, field);
         }
+
         boolean hasId = base.stream().anyMatch(o -> "id".equals(o.getProperty()));
         return hasId ? base : base.and(Sort.by(Sort.Direction.ASC, "id"));
+    }
+
+    private EquipmentRequest loadAndCheckVersion(Long id, Integer requestedVersion) {
+        EquipmentRequest r = requestRepo.findById(id)
+                .orElseThrow(() -> new RequestNotFoundException(id));
+
+        if (requestedVersion == null) {
+            throw new BadRequestException(
+                    "VALIDATION_ERROR",
+                    "Поле version обязательно для изменения",
+                    List.of(new FieldErrorDto("version", "обязательно"))
+            );
+        }
+
+        if (!requestedVersion.equals(r.getVersion())) {
+            throw new VersionConflictException(
+                    "Заявка была изменена другим пользователем. Обновите данные и повторите."
+            );
+        }
+
+        return r;
+    }
+
+    private void recordStatusHistory(
+            EquipmentRequest request,
+            User changedBy,
+            RequestStatus previousStatus,
+            RequestStatus newStatus,
+            String comment
+    ) {
+        RequestStatusHistory h = new RequestStatusHistory();
+        h.setRequest(request);
+        h.setChangedBy(changedBy);
+        h.setPreviousStatus(previousStatus);   // при создании = null
+        h.setNewStatus(newStatus);
+        h.setComment(comment);
+        h.setCreatedAt(Instant.now());
+        historyRepo.save(h);
+    }
+
+    private RequestDetailDto changeStatus(
+            Long id,
+            Integer requestedVersion,
+            RequestLifecyclePolicy.Action action,
+            String comment
+    ) {
+        // 1. Загрузка + явная проверка присланной версии.
+        EquipmentRequest r = loadAndCheckVersion(id, requestedVersion);
+
+        // 2. Запоминаем, откуда уходим, нужно и для матрицы, и для истории.
+        RequestStatus previousStatus = r.getStatus();
+
+        // 3. проверка «можно ли» вызов матрицы отовсюду.
+        RequestLifecyclePolicy.assertAllowed(action, previousStatus);
+
+        // 4. Куда идём, тоже берём из матрицы.
+        RequestStatus nextStatus = RequestLifecyclePolicy.targetStatus(action);
+
+        // 5. Кто меняет, грузим реального User для истории.
+        CurrentUser cu = currentUserProvider.currentUser();
+        User changedBy = userRepo.findById(cu.id())
+                .orElseThrow(() -> new CurrentUserNotFoundException(cu.id()));
+
+        // 6. Мутируем сущность: статус + дата изменения.
+        r.setStatus(nextStatus);
+        r.setUpdatedAt(Instant.now());
+        if (action == RequestLifecyclePolicy.Action.REJECT) {
+            r.setDecisionComment(comment);
+        }
+
+        // 7. Сохраняем и пишем историю в той же транзакции.
+        try {
+            EquipmentRequest saved = requestRepo.saveAndFlush(r);
+            recordStatusHistory(saved, changedBy, previousStatus, nextStatus, comment);
+            return RequestDetailDto.from(saved);
+        } catch (ObjectOptimisticLockingFailureException e) {
+            throw new VersionConflictException(
+                    "Заявка была изменена другим пользователем. Обновите данные и повторите.");
+        }
     }
 }
