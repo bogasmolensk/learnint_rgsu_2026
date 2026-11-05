@@ -50,4 +50,18 @@ public class EquipmentRequestController {
     ) {
         return ResponseEntity.ok(service.update(id, dto));
     }
+
+    @GetMapping
+    public ResponseEntity<PageResponseDto<RequestListItemDto>> list(
+            @RequestParam(required = false) String scope,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to,
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size,
+            @RequestParam(required = false) String sort
+    ) {
+        RequestSearchCriteria criteria = new RequestSearchCriteria(scope, status, from, to, page, size, sort);
+        return ResponseEntity.ok(service.list(criteria));
+    }
 }

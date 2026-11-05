@@ -43,3 +43,56 @@ Content-Type: application/json
   "quantity": 0,
   "justification": "тест"
 }
+
+### 4.1 Список без фильтров (employee id=1 -> только свои 4 из сида, НЕ 6) — п.1, демонстрация фильтра автора
+GET http://localhost:8080/api/v1/requests
+
+### 4.2 Комбинация фильтров: статус + диапазон дат (п.8 «совместные фильтры», п.1)
+GET http://localhost:8080/api/v1/requests?status=UNDER_REVIEW&from=2026-09-01T00:00:00Z&to=2026-12-31T23:59:59Z
+
+### 4.3 Пустой результат: статус, которого нет у employee (п.8, условие приёмки -> 200 + content:[])
+GET http://localhost:8080/api/v1/requests?status=CANCELLED
+
+### 4.4 Пагинация: страница 0 и 1 по size=2 (п.2,8 «две страницы»; под employee 4 заявки -> 2 страницы)
+GET http://localhost:8080/api/v1/requests?page=0&size=2
+GET http://localhost:8080/api/v1/requests?page=1&size=2
+
+### 4.5 Сортировка по id возр. + проверка стабильного порядка между страницами (п.3, tie-breaker)
+GET http://localhost:8080/api/v1/requests?sort=id,asc&page=0&size=2
+GET http://localhost:8080/api/v1/requests?sort=id,asc&page=1&size=2
+
+### 4.6 Employee + scope=pending -> scope ИГНОРИРУЕТСЯ, видит только свои (п.1, контракт строки 3)
+GET http://localhost:8080/api/v1/requests?scope=pending
+
+### 4.7 Ошибка параметра: неизвестный статус (п.5 -> 400 INVALID_STATUS + fieldErrors)
+GET http://localhost:8080/api/v1/requests?status=FOO
+
+### 4.8 Ошибка параметра: from > to (п.4 -> 400 INVALID_DATE_RANGE)
+GET http://localhost:8080/api/v1/requests?from=2026-12-01T00:00:00Z&to=2026-01-01T00:00:00Z
+
+### 4.9 Ошибка параметра: кривой формат даты (п.5 -> 400 INVALID_DATE_FORMAT)
+GET http://localhost:8080/api/v1/requests?from=ne-data
+
+### 4.10 Ошибка параметра: size > 100 (п.2 -> 400 VALIDATION_ERROR по полю size)
+GET http://localhost:8080/api/v1/requests?size=200
+
+### 4.11 Ошибка параметра: отрицательная страница (п.2 -> 400)
+GET http://localhost:8080/api/v1/requests?page=-1
+
+### 4.12 Ошибка параметра: неизвестное поле сортировки (п.3 -> 400 INVALID_SORT)
+GET http://localhost:8080/api/v1/requests?sort=equipmentName,asc
+
+### 4.13 Ошибка ТЕЛА: создание с quantity=0 (п.5 Bean Validation -> 400 VALIDATION_ERROR + fieldErrors)
+POST http://localhost:8080/api/v1/requests
+Content-Type: application/json
+
+{ "equipmentName": "Keyboard", "quantity": 0, "justification": "test" }
+
+### 4.14 Конфликт версии (п.6 -> 409 VERSION_CONFLICT): edit со СТАРОЙ version
+# 1) GET /api/v1/requests -> возьми id и version первой своей заявки (например id=7, version=0)
+# 2) PATCH с version=0 -> успех, version станет 1
+# 3) PATCH с ТОЙ ЖЕ version=0 (устаревшей) -> 409 VERSION_CONFLICT
+PATCH http://localhost:8080/api/v1/requests/7
+Content-Type: application/json
+
+{ "quantity": 9, "version": 0 }
