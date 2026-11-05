@@ -72,4 +72,8 @@ public class EquipmentRequest {
     public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
 
     public Integer getVersion() { return version; }
+
+    public void setVersion(Integer version) {
+        this.version = version;
+    }
 }

@@ -64,4 +64,36 @@ public class EquipmentRequestController {
         RequestSearchCriteria criteria = new RequestSearchCriteria(scope, status, from, to, page, size, sort);
         return ResponseEntity.ok(service.list(criteria));
     }
+
+    @PostMapping("/{id}/submit")
+    public ResponseEntity<RequestDetailDto> submit(
+            @PathVariable Long id,
+            @Valid @RequestBody ActionVersionDto dto
+    ) {
+        return ResponseEntity.ok(service.submit(id, dto));
+    }
+
+    @PostMapping("/{id}/approve")
+    public ResponseEntity<RequestDetailDto> approve(
+            @PathVariable Long id,
+            @Valid @RequestBody ActionVersionDto dto
+    ) {
+        return ResponseEntity.ok(service.approve(id, dto));
+    }
+
+    @PostMapping("/{id}/reject")
+    public ResponseEntity<RequestDetailDto> reject(
+            @PathVariable Long id,
+            @Valid @RequestBody RejectRequestDto dto
+    ) {
+        return ResponseEntity.ok(service.reject(id, dto));
+    }
+
+    @PostMapping("/{id}/cancel")
+    public ResponseEntity<RequestDetailDto> cancel(
+            @PathVariable Long id,
+            @Valid @RequestBody ActionVersionDto dto
+    ) {
+        return ResponseEntity.ok(service.cancel(id, dto));
+    }
 }
