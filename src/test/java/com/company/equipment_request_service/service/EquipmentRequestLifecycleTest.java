@@ -2,6 +2,7 @@ package com.company.equipment_request_service.service;
 
 import com.company.equipment_request_service.dto.ActionVersionDto;
 import com.company.equipment_request_service.dto.RejectRequestDto;
+import com.company.equipment_request_service.dto.RequestDetailDto;
 import com.company.equipment_request_service.entity.*;
 import com.company.equipment_request_service.repository.EquipmentRequestRepository;
 import com.company.equipment_request_service.repository.RequestStatusHistoryRepository;
@@ -21,6 +22,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -54,77 +56,93 @@ class EquipmentRequestLifecycleTest {
         return r;
     }
 
-    // заглушки, общие для успешных переходов
     private void stubSuccess(EquipmentRequest r) {
         when(currentUserProvider.currentUser()).thenReturn(new CurrentUser(1L, UserRole.EMPLOYEE));
-        when(userRepo.findById(1L)).thenReturn(Optional.of(user()));
+        when(userRepo.findById(anyLong())).thenReturn(Optional.of(user()));
         when(requestRepo.findById(10L)).thenReturn(Optional.of(r));
         when(requestRepo.saveAndFlush(any(EquipmentRequest.class))).thenAnswer(i -> i.getArgument(0));
     }
 
     @Test void submit_fromDraft_ok() {
         EquipmentRequest r = req(RequestStatus.DRAFT, 0); stubSuccess(r);
-        service.submit(10L, new ActionVersionDto(0));
-        assertThat(r.getStatus()).isEqualTo(RequestStatus.UNDER_REVIEW);
+        RequestDetailDto submit = service.submit(10L, new ActionVersionDto(0));
+        assertThat(submit.status()).isEqualTo(RequestStatus.UNDER_REVIEW);
+        verify(requestRepo).saveAndFlush(r);
+        verify(historyRepo).save(any(RequestStatusHistory.class));
+    }
+
+    @Test void approve_fromUnderReview_ok() {
+        EquipmentRequest r = req(RequestStatus.UNDER_REVIEW, 1);
+        stubSuccess(r); // Сначала базовая настройка (создаст EMPLOYEE id=1)
+        when(currentUserProvider.currentUser()).thenReturn(new CurrentUser(999L, UserRole.APPROVER));
+        RequestDetailDto approve = service.approve(10L, new ActionVersionDto(1));
+        assertThat(approve.status()).isEqualTo(RequestStatus.APPROVED);
+        verify(requestRepo).saveAndFlush(r);
+        verify(historyRepo).save(any(RequestStatusHistory.class));
+    }
+
+    @Test void reject_fromUnderReview_savesComment() {
+        EquipmentRequest r = req(RequestStatus.UNDER_REVIEW, 1);
+        stubSuccess(r); // Сначала базовая настройка
+        when(currentUserProvider.currentUser()).thenReturn(new CurrentUser(999L, UserRole.APPROVER));
+        RequestDetailDto reject = service.reject(10L, new RejectRequestDto("bad", 1));
+        assertThat(reject.status()).isEqualTo(RequestStatus.REJECTED);
+        assertThat(reject.decisionComment()).isEqualTo("bad");
+        verify(requestRepo).saveAndFlush(r);
+        verify(historyRepo).save(any(RequestStatusHistory.class));
+    }
+
+    @Test void cancel_fromDraft_ok() {
+        EquipmentRequest r = req(RequestStatus.DRAFT, 0); stubSuccess(r);
+        RequestDetailDto cancel = service.cancel(10L, new ActionVersionDto(0));
+        assertThat(cancel.status()).isEqualTo(RequestStatus.CANCELLED);
+        verify(requestRepo).saveAndFlush(r);
+        verify(historyRepo).save(any(RequestStatusHistory.class));
+    }
+
+    @Test void cancel_fromUnderReview_ok() {
+        EquipmentRequest r = req(RequestStatus.UNDER_REVIEW, 1); stubSuccess(r);
+        RequestDetailDto cancel = service.cancel(10L, new ActionVersionDto(1));
+        assertThat(cancel.status()).isEqualTo(RequestStatus.CANCELLED);
         verify(requestRepo).saveAndFlush(r);
         verify(historyRepo).save(any(RequestStatusHistory.class));
     }
 
     @Test void submit_fromUnderReview_blocked() {
+        when(currentUserProvider.currentUser()).thenReturn(new CurrentUser(1L, UserRole.EMPLOYEE));
         EquipmentRequest r = req(RequestStatus.UNDER_REVIEW, 1);
         when(requestRepo.findById(10L)).thenReturn(Optional.of(r));
         assertThatThrownBy(() -> service.submit(10L, new ActionVersionDto(1)))
                 .isInstanceOf(InvalidStatusTransitionException.class);
         verify(requestRepo, never()).saveAndFlush(any());
         verify(historyRepo, never()).save(any());
-        assertThat(r.getStatus()).isEqualTo(RequestStatus.UNDER_REVIEW); // не изменился
-    }
-
-    @Test void approve_fromUnderReview_ok() {
-        EquipmentRequest r = req(RequestStatus.UNDER_REVIEW, 1); stubSuccess(r);
-        service.approve(10L, new ActionVersionDto(1));
-        assertThat(r.getStatus()).isEqualTo(RequestStatus.APPROVED);
-        verify(historyRepo).save(any(RequestStatusHistory.class));
+        assertThat(r.getStatus()).isEqualTo(RequestStatus.UNDER_REVIEW);
     }
 
     @Test void approve_fromDraft_blocked() {
+        when(currentUserProvider.currentUser()).thenReturn(new CurrentUser(999L, UserRole.APPROVER));
         EquipmentRequest r = req(RequestStatus.DRAFT, 0);
         when(requestRepo.findById(10L)).thenReturn(Optional.of(r));
         assertThatThrownBy(() -> service.approve(10L, new ActionVersionDto(0)))
                 .isInstanceOf(InvalidStatusTransitionException.class);
         verify(requestRepo, never()).saveAndFlush(any());
+        verify(historyRepo, never()).save(any());
         assertThat(r.getStatus()).isEqualTo(RequestStatus.DRAFT);
     }
 
-    @Test void reject_fromUnderReview_savesComment() {
-        EquipmentRequest r = req(RequestStatus.UNDER_REVIEW, 1); stubSuccess(r);
-        service.reject(10L, new RejectRequestDto("bad", 1));
-        assertThat(r.getStatus()).isEqualTo(RequestStatus.REJECTED);
-        assertThat(r.getDecisionComment()).isEqualTo("bad");
-        verify(historyRepo).save(any(RequestStatusHistory.class));
-    }
-
     @Test void reject_fromDraft_blocked() {
+        when(currentUserProvider.currentUser()).thenReturn(new CurrentUser(999L, UserRole.APPROVER));
         EquipmentRequest r = req(RequestStatus.DRAFT, 0);
         when(requestRepo.findById(10L)).thenReturn(Optional.of(r));
         assertThatThrownBy(() -> service.reject(10L, new RejectRequestDto("bad", 0)))
                 .isInstanceOf(InvalidStatusTransitionException.class);
         verify(requestRepo, never()).saveAndFlush(any());
-    }
-
-    @Test void cancel_fromDraft_ok() {
-        EquipmentRequest r = req(RequestStatus.DRAFT, 0); stubSuccess(r);
-        service.cancel(10L, new ActionVersionDto(0));
-        assertThat(r.getStatus()).isEqualTo(RequestStatus.CANCELLED);
-    }
-
-    @Test void cancel_fromUnderReview_ok() {
-        EquipmentRequest r = req(RequestStatus.UNDER_REVIEW, 1); stubSuccess(r);
-        service.cancel(10L, new ActionVersionDto(1));
-        assertThat(r.getStatus()).isEqualTo(RequestStatus.CANCELLED);
+        verify(historyRepo, never()).save(any());
+        assertThat(r.getStatus()).isEqualTo(RequestStatus.DRAFT);
     }
 
     @Test void cancel_fromApproved_blocked() {
+        when(currentUserProvider.currentUser()).thenReturn(new CurrentUser(1L, UserRole.EMPLOYEE));
         EquipmentRequest r = req(RequestStatus.APPROVED, 2);
         when(requestRepo.findById(10L)).thenReturn(Optional.of(r));
         assertThatThrownBy(() -> service.cancel(10L, new ActionVersionDto(2)))

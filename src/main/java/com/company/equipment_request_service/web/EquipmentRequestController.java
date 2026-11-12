@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
+import java.util.List;
 
 @RestController
 
@@ -63,6 +64,11 @@ public class EquipmentRequestController {
     ) {
         RequestSearchCriteria criteria = new RequestSearchCriteria(scope, status, from, to, page, size, sort);
         return ResponseEntity.ok(service.list(criteria));
+    }
+
+    @GetMapping("/{id}/history")
+    public ResponseEntity<List<HistoryItemDto>> history(@PathVariable Long id) {
+        return ResponseEntity.ok(service.getHistory(id));
     }
 
     @PostMapping("/{id}/submit")
