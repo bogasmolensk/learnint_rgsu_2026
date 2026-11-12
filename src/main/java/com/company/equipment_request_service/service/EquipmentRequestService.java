@@ -47,6 +47,12 @@ public class EquipmentRequestService {
         this.currentUserProvider = currentUserProvider;
     }
 
+    private void assertVisibleToUser(EquipmentRequest r, CurrentUser cu) {
+        if (cu.role() == UserRole.EMPLOYEE && !r.getAuthor().getId().equals(cu.id())) {
+            throw new RequestNotFoundException(r.getId());
+        }
+    }
+
     @Transactional
 
     public RequestDetailDto create(CreateRequestDto dto) {
@@ -83,6 +89,8 @@ public class EquipmentRequestService {
         EquipmentRequest r = requestRepo.findById(id)
                 .orElseThrow(() -> new RequestNotFoundException(id));
 
+        CurrentUser cu = currentUserProvider.currentUser();
+        assertVisibleToUser(r, cu);
         return RequestDetailDto.from(r);
     }
 
@@ -91,13 +99,13 @@ public class EquipmentRequestService {
     public RequestDetailDto update(Long id, UpdateRequestDto dto) {
         EquipmentRequest r = loadAndCheckVersion(id, dto.version());
 
-        RequestLifecyclePolicy.assertAllowed(RequestLifecyclePolicy.Action.EDIT, r.getStatus());
-
         CurrentUser cu = currentUserProvider.currentUser();
-        if (!r.getAuthor().getId().equals(cu.id())) {
-            throw new ForbiddenException("Изменять заявку может только её автор");  // 403
+        assertVisibleToUser(r, cu);
+        if (cu.role() == UserRole.APPROVER && !r.getAuthor().getId().equals(cu.id())) {
+            throw new ForbiddenException("Ответственный не может редактировать чужую заявку");
         }
 
+        RequestLifecyclePolicy.assertAllowed(RequestLifecyclePolicy.Action.EDIT, r.getStatus());
         if (dto.equipmentName() != null && !dto.equipmentName().isBlank()) r.setEquipmentName(dto.equipmentName());
         if (dto.quantity() != null) r.setQuantity(dto.quantity());
         if (dto.justification() != null && !dto.justification().isBlank()) r.setJustification(dto.justification());
@@ -208,6 +216,18 @@ public class EquipmentRequestService {
         return changeStatus(id, dto.version(), RequestLifecyclePolicy.Action.CANCEL, null);
     }
 
+    @Transactional(readOnly = true)
+    public List<HistoryItemDto> getHistory(Long requestId) {
+        EquipmentRequest r = requestRepo.findById(requestId)
+                .orElseThrow(() -> new RequestNotFoundException(requestId));
+        CurrentUser cu = currentUserProvider.currentUser();
+        assertVisibleToUser(r, cu);
+        return historyRepo.findByRequestIdOrderByCreatedAtAscIdAsc(requestId)
+                .stream()
+                .map(HistoryItemDto::from)
+                .toList();
+    }
+
     private Instant parseInstantOrThrow(String value, String field) {
         if (value == null || value.isBlank()) return null;       // фильтр не применяется
         try {
@@ -312,6 +332,28 @@ public class EquipmentRequestService {
         // 2. Запоминаем, откуда уходим, нужно и для матрицы, и для истории.
         RequestStatus previousStatus = r.getStatus();
 
+        // 2.1. НОВОЕ: видимость для сотрудника
+        CurrentUser cu = currentUserProvider.currentUser();
+        assertVisibleToUser(r, cu);
+
+        // 2.2. НОВОЕ: права на операцию по роли/принадлежности — ДО матрицы
+        switch (action) {
+            case SUBMIT, CANCEL -> {
+                if (!r.getAuthor().getId().equals(cu.id())) {
+                    throw new ForbiddenException("Отправлять и отменять может только создатель заявки");
+                }
+            }
+            case APPROVE, REJECT -> {
+                if (cu.role() != UserRole.APPROVER) {
+                    throw new ForbiddenException("Решение принимает только ответственный");
+                }
+                if (r.getAuthor().getId().equals(cu.id())) {
+                    throw new ForbiddenException("Ответственный не может рассматривать собственную заявку");
+                }
+            }
+            case EDIT -> { }
+        }
+
         // 3. проверка «можно ли» вызов матрицы отовсюду.
         RequestLifecyclePolicy.assertAllowed(action, previousStatus);
 
@@ -319,7 +361,6 @@ public class EquipmentRequestService {
         RequestStatus nextStatus = RequestLifecyclePolicy.targetStatus(action);
 
         // 5. Кто меняет, грузим реального User для истории.
-        CurrentUser cu = currentUserProvider.currentUser();
         User changedBy = userRepo.findById(cu.id())
                 .orElseThrow(() -> new CurrentUserNotFoundException(cu.id()));
 
