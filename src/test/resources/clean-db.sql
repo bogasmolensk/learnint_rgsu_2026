@@ -1,0 +1,1 @@
+TRUNCATE TABLE request_status_history, equipment_requests RESTART IDENTITY CASCADE;

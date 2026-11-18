@@ -1,32 +1,33 @@
 package com.company.equipment_request_service.service;
 
+import com.company.equipment_request_service.BaseIntegrationTest;
 import com.company.equipment_request_service.dto.ActionVersionDto;
 import com.company.equipment_request_service.dto.CreateRequestDto;
 import com.company.equipment_request_service.entity.RequestStatus;
 import com.company.equipment_request_service.repository.EquipmentRequestRepository;
 import com.company.equipment_request_service.repository.RequestStatusHistoryRepository;
+import com.company.equipment_request_service.security.CurrentUserProvider;
 import com.company.equipment_request_service.web.error.InvalidStatusTransitionException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@SpringBootTest
-@ActiveProfiles({"test", "stub-user"})
-class EquipmentRequestHistoryTest {
+@ActiveProfiles("stub-user")
+class EquipmentRequestHistoryTest extends BaseIntegrationTest {
 
-    @Autowired
-    EquipmentRequestService service;
-    @Autowired
-    EquipmentRequestRepository requestRepo;
-    @Autowired
-    RequestStatusHistoryRepository historyRepo;
+    @Autowired EquipmentRequestService service;
+    @Autowired EquipmentRequestRepository requestRepo;
+    @Autowired RequestStatusHistoryRepository historyRepo;
+    @Autowired CurrentUserProvider currentUserProvider;
 
     @Test
     void submit_recordsHistoryRow_inDatabase() {
+        // ожидаемого исполнителя берём из провайдера
+        Long actorId = currentUserProvider.currentUser().id();
+
         var created = service.create(new CreateRequestDto("Monitor", 1, "test"));
         var submitted = service.submit(created.id(), new ActionVersionDto(created.version()));
 
@@ -36,9 +37,14 @@ class EquipmentRequestHistoryTest {
         assertThat(history).hasSize(2); // null->DRAFT при создании + DRAFT->UNDER_REVIEW при submit
         assertThat(history.get(0).getPreviousStatus()).isNull();
         assertThat(history.get(0).getNewStatus()).isEqualTo(RequestStatus.DRAFT);
+        assertThat(history.get(0).getChangedBy().getId()).isEqualTo(actorId);
         assertThat(history.get(1).getPreviousStatus()).isEqualTo(RequestStatus.DRAFT);
         assertThat(history.get(1).getNewStatus()).isEqualTo(RequestStatus.UNDER_REVIEW);
-        assertThat(history.get(1).getChangedBy().getId()).isEqualTo(1L);
+        assertThat(history.get(1).getChangedBy().getId()).isEqualTo(actorId);
+
+        // запись принадлежит именно этой заявке
+        assertThat(history).allSatisfy(h ->
+                assertThat(h.getRequest().getId()).isEqualTo(created.id()));
     }
 
     @Test

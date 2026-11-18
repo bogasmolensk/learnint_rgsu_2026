@@ -1,5 +1,6 @@
 package com.company.equipment_request_service.service;
 
+import com.company.equipment_request_service.BaseIntegrationTest;
 import com.company.equipment_request_service.dto.ActionVersionDto;
 import com.company.equipment_request_service.dto.CreateRequestDto;
 import com.company.equipment_request_service.entity.EquipmentRequest;
@@ -21,9 +22,9 @@ import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest
-@ActiveProfiles({"test", "stub-user"})
-class ConcurrentDecisionTest {
+
+@ActiveProfiles("stub-user")
+class ConcurrentDecisionTest extends BaseIntegrationTest {
 
     @Autowired EquipmentRequestService service;
     @Autowired EquipmentRequestRepository requestRepo;

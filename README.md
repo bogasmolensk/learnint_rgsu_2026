@@ -89,3 +89,25 @@ set DB_PASSWORD=<ваш_пароль>
 mvn spring-boot:run
 ```
 После старта в pgAdmin → Schemas → public → Tables появятся три таблицы + `flyway_schema_history`.
+
+## Запуск и тесты
+
+Требования: JDK 17, Maven, запущенный Docker Desktop (нужен только для тестов).
+
+Тесты (база поднимается сама в контейнере, локальная БД не требуется):
+```bash
+mvn clean test
+mvn test -Dtest=EquipmentRequestApiTest   # отдельный класс
+```
+
+Приложение локально (своя БД):
+```bash
+set DB_USERNAME=<пользователь>
+set DB_PASSWORD=<пароль>
+mvn spring-boot:run
+```
+
+Демо-пользователи: emp_one / emp_two (EMPLOYEE), appr_one (APPROVER);
+пароли-фикстуры demo-emp1 / demo-emp2 / demo-appr1, в репозитории только bcrypt-хеши.
+
+CI: `.github/workflows/ci.yml` — сборка и все тесты при каждом pull request и push в main/master
