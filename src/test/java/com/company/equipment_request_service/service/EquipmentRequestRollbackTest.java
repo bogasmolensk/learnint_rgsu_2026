@@ -1,5 +1,6 @@
 package com.company.equipment_request_service.service;
 
+import com.company.equipment_request_service.BaseIntegrationTest;
 import com.company.equipment_request_service.dto.ActionVersionDto;
 import com.company.equipment_request_service.dto.CreateRequestDto;
 import com.company.equipment_request_service.entity.EquipmentRequest;
@@ -18,9 +19,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 
-@SpringBootTest
-@ActiveProfiles({"test", "stub-user"})
-class EquipmentRequestRollbackTest {
+@ActiveProfiles("stub-user")
+class EquipmentRequestRollbackTest extends BaseIntegrationTest{
 
     @Autowired EquipmentRequestService service;
     @Autowired EquipmentRequestRepository requestRepo;
